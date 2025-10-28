@@ -1,11 +1,11 @@
 # Blender Video Maker
+import sys
 import bpy
 import os
-import ffmpeg
 import wave
 import numpy as np
 from mathutils import Vector
-
+import subprocess
 
 class BlenderVideoMaker:
     def __init__(self, directory="."):
@@ -13,6 +13,66 @@ class BlenderVideoMaker:
         self.wav_data = None
         self.sample_rate = None
         self.fft_data = None
+        
+        sys.path.append(r"C:\Users\Hyacinthax\Documents\BlenderVideos")
+
+        # ---------- RUNNERS ----------
+    def run(self):
+        """Interactive WAV visualizer runner inside Blender."""
+        self.clear_console()
+        print("=== 🎧 WAV Visualizer Runner ===\n")
+        files = self.list_wav_files()
+        if not files:
+            return
+
+        try:
+            choice = int(input("\nSelect a file number: ")) - 1
+            filepath = os.path.join(self.directory, files[choice])
+        except (ValueError, IndexError):
+            print("❌ Invalid selection.")
+            return
+
+        print(f"\n▶ Loading: {filepath}")
+        self.load_audio(filepath)
+        self.get_fft(chunks=200)
+
+        self.clear_scene()
+        objs = self.create_wave_objects(count=50)
+        self.animate_objects(objs)
+        print("\n  Done! Animation keyframes inserted.")
+
+    def main_menu(self):
+        """Text-based main menu for managing conversions and visualizations."""
+        while True:
+            print("\n🎵 AUDIO VISUALIZER MENU 🎵")
+            print("1️⃣  Convert MP3 → WAV")
+            print("2️⃣  Read WAV file")
+            print("3️⃣  Generate FFT data")
+            print("4️⃣  Run Blender animation")
+            print("5️⃣  Exit")
+            choice = input("Select an option: ")
+
+            if choice == "1":
+                mp3 = input("Enter MP3 file path: ").strip('"')
+                wav = input("Enter desired WAV output path: ").strip('"')
+                self.convert_mp3_to_wav(mp3, wav)
+
+            elif choice == "2":
+                path = input("Enter WAV file path: ").strip('"')
+                self.load_audio(path)
+
+            elif choice == "3":
+                self.get_fft()
+
+            elif choice == "4":
+                self.run()
+
+            elif choice == "5":
+                print("👋 Exiting program.")
+                break
+
+            else:
+                print("❌ Invalid option. Please select 1-5.")
 
     # ---------- SYSTEM HELPERS ----------
     def clear_console(self):
@@ -23,13 +83,28 @@ class BlenderVideoMaker:
 
     # ---------- AUDIO PROCESSING ----------
     def convert_mp3_to_wav(self, mp3_path, wav_path):
-        """Converts an MP3 file to WAV using ffmpeg."""
+        """Converts an MP3 file to WAV using the system ffmpeg executable."""
         try:
-            print(f"Converting {mp3_path} → {wav_path} ...")
-            ffmpeg.input(mp3_path).output(wav_path).run(overwrite_output=True, quiet=True)
-            print("✅ Conversion complete.")
+            print(f"🎶 Converting {mp3_path} → {wav_path} ...")
+
+            # Call system ffmpeg
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", mp3_path, wav_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            if result.returncode == 0:
+                print("✅ Conversion complete.")
+            else:
+                print("❌ Error during conversion:")
+                print(result.stderr)
+
+        except FileNotFoundError:
+            print("⚠️ ffmpeg not found. Make sure it's installed and in your PATH.")
         except Exception as e:
-            print(f"❌ Error converting file: {e}")
+            print(f"❌ Unexpected error: {e}")
 
     def list_wav_files(self):
         """List all .wav files in the working directory."""
@@ -102,65 +177,6 @@ class BlenderVideoMaker:
         bpy.ops.object.select_all(action='SELECT')
         bpy.ops.object.delete(use_global=False)
         print("🧹 Cleared existing scene objects.")
-
-    # ---------- RUNNERS ----------
-    def run(self):
-        """Interactive WAV visualizer runner inside Blender."""
-        self.clear_console()
-        print("=== 🎧 WAV Visualizer Runner ===\n")
-        files = self.list_wav_files()
-        if not files:
-            return
-
-        try:
-            choice = int(input("\nSelect a file number: ")) - 1
-            filepath = os.path.join(self.directory, files[choice])
-        except (ValueError, IndexError):
-            print("❌ Invalid selection.")
-            return
-
-        print(f"\n▶ Loading: {filepath}")
-        self.load_audio(filepath)
-        self.get_fft(chunks=200)
-
-        self.clear_scene()
-        objs = self.create_wave_objects(count=50)
-        self.animate_objects(objs)
-        print("\n✅ Done! Animation keyframes inserted.")
-
-    def main_menu(self):
-        """Text-based main menu for managing conversions and visualizations."""
-        while True:
-            print("\n🎵 AUDIO VISUALIZER MENU 🎵")
-            print("1️⃣  Convert MP3 → WAV")
-            print("2️⃣  Read WAV file")
-            print("3️⃣  Generate FFT data")
-            print("4️⃣  Run Blender animation")
-            print("5️⃣  Exit")
-            choice = input("Select an option: ")
-
-            if choice == "1":
-                mp3 = input("Enter MP3 file path: ").strip('"')
-                wav = input("Enter desired WAV output path: ").strip('"')
-                self.convert_mp3_to_wav(mp3, wav)
-
-            elif choice == "2":
-                path = input("Enter WAV file path: ").strip('"')
-                self.load_audio(path)
-
-            elif choice == "3":
-                self.get_fft()
-
-            elif choice == "4":
-                self.run()
-
-            elif choice == "5":
-                print("👋 Exiting program.")
-                break
-
-            else:
-                print("❌ Invalid option. Please select 1-5.")
-
 
 # ---------- Example Usage ----------
 # In Blender's scripting editor:
