@@ -88,15 +88,22 @@ class BlenderVideoMaker:
         for obj in [o for o in bpy.data.objects if o.type == 'MESH']:
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    def create_black_glass_floor(self, size=1000, depth=-50):
+    def create_black_glass_floor(self, size=1000, depth=-3):
         import bpy
+        import bmesh
 
-        # Create plane
+        # Create the mesh and object
         mesh = bpy.data.meshes.new("BlackGlassFloor")
         floor = bpy.data.objects.new("BlackGlassFloor", mesh)
         bpy.context.collection.objects.link(floor)
-        
-        # Make it huge
+
+        # Build a plane using bmesh
+        bm = bmesh.new()
+        bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=1)
+        bm.to_mesh(mesh)
+        bm.free()
+
+        # Scale it up massively and lower it beneath everything
         floor.scale = (size, size, 1)
         floor.location.z = depth
 
@@ -105,12 +112,12 @@ class BlenderVideoMaker:
         mat.use_nodes = True
         bsdf = mat.node_tree.nodes.get("Principled BSDF")
         if bsdf:
-            bsdf.inputs['Base Color'].default_value = (0, 0, 0, 1)  # black
+            bsdf.inputs['Base Color'].default_value = (0, 0, 0, 1)  # pure black
             bsdf.inputs['Metallic'].default_value = 1.0
-            bsdf.inputs['Roughness'].default_value = 0.0
+            bsdf.inputs['Roughness'].default_value = 0.05  # slight roughness for realistic reflection
         floor.data.materials.append(mat)
 
-        print("✅ Black glass floor created.")
+        print("✅ Black glass floor created (size=%.1f, depth=%.1f)" % (size, depth))
 
 
     def create_wave_objects(self, rows=10, cols=10, spacing=0.5):
@@ -142,7 +149,7 @@ class BlenderVideoMaker:
         return objs
 
 
-    def animate_objects(self, objs, rows=20, cols=20):
+    def animate_objects(self, objs, rows=30, cols=30, exaggeration=2.5, morph_amount=0.12, z_wave_emphasis=0.15):
         import bpy
         import numpy as np
         from math import sin
@@ -196,31 +203,34 @@ class BlenderVideoMaker:
 
     def setup_camera(self, rows=10, cols=10, spacing=0.5):
         import bpy
-
-        # Use existing camera or create a new one if none exists
+        # Use existing camera or create new
         cam = next((c for c in bpy.data.objects if c.type == 'CAMERA'), None)
         if not cam:
             bpy.ops.object.camera_add()
             cam = bpy.context.object
 
-        # ✅ Your custom camera position and rotation
-        cam.location = (5, -4.2, 0)
-        cam.rotation_euler = (np.radians(90), np.radians(0), np.radians(-0))
-
-        # Make sure the scene uses this camera
+        # Position camera above the center
+        cam.location = ((cols-1)*spacing/2, (rows-1)*spacing/2, max(rows, cols))
+        cam.rotation_euler = (1.2, 0, 0)  # angled down
         bpy.context.scene.camera = cam
-
-        print("📸 Camera set to position (5, -4.2, 0) with rotation (90°, 0°, 0°).")
-
 
 # ---------- Blender UI / Add-on ----------
 class AVProperties(bpy.types.PropertyGroup):
     mp3_path: bpy.props.StringProperty(name="MP3 Path", subtype='FILE_PATH')
 
     # Wave pool settings
-    rows: bpy.props.IntProperty(name="Rows", default=20, min=1)
-    cols: bpy.props.IntProperty(name="Columns", default=20, min=1)
+    rows: bpy.props.IntProperty(name="Rows", default=30, min=1)
+    cols: bpy.props.IntProperty(name="Columns", default=30, min=1)
     spacing: bpy.props.FloatProperty(name="Spacing", default=0.5, min=0.01)
+
+    # Floor and animation settings
+    floor_size: bpy.props.FloatProperty(name="Floor Size", default=1000, min=10)
+    floor_depth: bpy.props.FloatProperty(name="Floor Depth", default=-10, min=-200)
+
+    exaggeration: bpy.props.FloatProperty(name="Z Exaggeration", default=2.5, min=0.1, max=10)
+    morph_amount: bpy.props.FloatProperty(name="Morph Amount", default=0.12, min=0.0, max=1.0)
+    z_wave_emphasis: bpy.props.FloatProperty(name="Z Wave Emphasis", default=0.15, min=0.0, max=1.0)
+
 
 class AV_OT_ConvertAndVisualize(bpy.types.Operator):
     bl_idname = "av.convert_and_visualize"
@@ -244,19 +254,32 @@ class AV_OT_ConvertAndVisualize(bpy.types.Operator):
         # Clear previous objects
         maker.clear_scene()
 
-        maker.create_black_glass_floor()
+        # Create the black glass floor using user settings
+        maker.create_black_glass_floor(size=props.floor_size, depth=props.floor_depth)
 
-        # Create 2D wave pool
-        objs = maker.create_wave_objects(rows=props.rows, cols=props.cols, spacing=props.spacing)
+        # Create the 2D wave grid
+        objs = maker.create_wave_objects(
+            rows=props.rows,
+            cols=props.cols,
+            spacing=props.spacing
+        )
 
-        # Set up camera separately
-        maker.setup_camera()
+        # Set up the camera
+        maker.setup_camera(rows=props.rows, cols=props.cols, spacing=props.spacing)
 
-        # Animate objects
-        maker.animate_objects(objs, rows=props.rows, cols=props.cols)
+        # Animate the wave pool using user-adjustable parameters
+        maker.animate_objects(
+            objs,
+            rows=props.rows,
+            cols=props.cols,
+            exaggeration=props.exaggeration,
+            morph_amount=props.morph_amount,
+            z_wave_emphasis=props.z_wave_emphasis
+        )
 
-        self.report({'INFO'}, f"Visualization created from {os.path.basename(wav_path)}")
+        self.report({'INFO'}, f"✅ Visualization created from {os.path.basename(wav_path)}")
         return {'FINISHED'}
+
 
 class AV_PT_MainPanel(bpy.types.Panel):
     bl_label = "Audio Visualizer"
@@ -273,6 +296,15 @@ class AV_PT_MainPanel(bpy.types.Panel):
         layout.prop(props, "cols")
         layout.prop(props, "spacing")
         layout.operator("av.convert_and_visualize", icon="MOD_WAVE")
+        layout.label(text="Floor Settings:")
+        layout.prop(props, "floor_size")
+        layout.prop(props, "floor_depth")
+
+        layout.label(text="Animation Settings:")
+        layout.prop(props, "exaggeration")
+        layout.prop(props, "morph_amount")
+        layout.prop(props, "z_wave_emphasis")
+
 
 
 
