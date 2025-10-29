@@ -24,7 +24,9 @@ class BlenderVideoMaker:
         self.sample_rate = None
         self.fft_data = None
 
+    # ---------- Audio ----------
     def convert_mp3_to_wav(self, mp3_path):
+        import subprocess, os
         if not mp3_path or not os.path.exists(mp3_path):
             print("❌ Invalid MP3 path.")
             return None
@@ -32,86 +34,90 @@ class BlenderVideoMaker:
         base, _ = os.path.splitext(mp3_path)
         wav_path = base + ".wav"
 
-        # Ensure ffmpeg exists
-        ffmpeg_exe = shutil.which("ffmpeg")
-        if not ffmpeg_exe:
-            print("❌ ffmpeg not found in PATH.")
+        ffmpeg_exe = "C:\\ffmpeg\\bin\\ffmpeg.exe"
+        if not os.path.exists(ffmpeg_exe):
+            print("❌ ffmpeg not found.")
             return None
 
-        print(f"🎶 Converting {mp3_path} → {wav_path}")
-        result = subprocess.run(
-            [ffmpeg_exe, "-y", "-i", mp3_path, wav_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        if result.returncode != 0:
-            print("❌ Conversion failed:")
-            print(result.stderr)
-            return None
-
-        print("✅ Conversion complete.")
+        subprocess.run([ffmpeg_exe, "-y", "-i", mp3_path, wav_path],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return wav_path
 
     def load_audio(self, filepath):
+        import wave, numpy as np
         with wave.open(filepath, 'rb') as wf:
-            n_channels = wf.getnchannels()
-            n_frames = wf.getnframes()
-            framerate = wf.getframerate()
-            raw_data = wf.readframes(n_frames)
-            data = np.frombuffer(raw_data, dtype=np.int16)
-            if n_channels == 2:
+            data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+            if wf.getnchannels() == 2:
                 data = data[::2]
             self.wav_data = data
-            self.sample_rate = framerate
-            return data, framerate
+            self.sample_rate = wf.getframerate()
+        return self.wav_data, self.sample_rate
 
     def get_fft(self, chunks=200):
-        if self.wav_data is None:
-            print("⚠️ Load audio first.")
-            return
-        data = self.wav_data
-        chunk_size = len(data) // chunks
-        fft_bands = []
-        for i in range(chunks):
-            seg = data[i * chunk_size:(i + 1) * chunk_size]
-            fft_vals = np.abs(np.fft.fft(seg))[:chunk_size // 2]
-            fft_bands.append(np.mean(fft_vals))
-        self.fft_data = np.array(fft_bands)
+        import numpy as np
+        if self.wav_data is None: return
+        chunk_size = len(self.wav_data) // chunks
+        self.fft_data = np.array([
+            np.mean(np.abs(np.fft.fft(self.wav_data[i*chunk_size:(i+1)*chunk_size])[:chunk_size//2]))
+            for i in range(chunks)
+        ])
         print(f"✅ Computed FFT ({chunks} chunks).")
 
+    # ---------- Scene ----------
     def clear_scene(self):
-        bpy.ops.object.select_all(action='SELECT')
-        bpy.ops.object.delete(use_global=False)
-        print("🧹 Scene cleared.")
+        import bpy
+        for obj in [o for o in bpy.data.objects if o.type == 'MESH']:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
-    def create_wave_objects(self, count=50):
+    def create_wave_objects(self, rows=100, cols=100, spacing=0.5):
+        import bpy
         objs = []
-        for i in range(count):
-            bpy.ops.mesh.primitive_ico_sphere_add(radius=0.2, location=(i * 0.3, 0, 0))
-            objs.append(bpy.context.object)
+        for y in range(rows):
+            for x in range(cols):
+                bpy.ops.mesh.primitive_ico_sphere_add(radius=0.2, location=(x*spacing, y*spacing, 0))
+                objs.append(bpy.context.object)
         return objs
 
-    def animate_objects(self, objs):
-        if self.fft_data is None:
-            print("⚠️ FFT not computed.")
-            return
+    def animate_objects(self, objs, rows=100, cols=100):
+        import bpy
+        from math import sin
+        from mathutils import Vector
+        if self.fft_data is None: return
+
         frame = 1
         max_val = max(self.fft_data)
         for amp in self.fft_data:
             for i, obj in enumerate(objs):
-                scale_factor = 1 + (amp / max_val) * np.sin(i)
-                obj.scale = Vector((scale_factor,) * 3)
+                x, y = i % cols, i // cols
+                ripple = sin(x + y + frame/5)
+                scale_factor = 1 + (amp/max_val) * ripple
+                obj.scale = Vector((scale_factor, scale_factor, scale_factor))
                 obj.keyframe_insert(data_path="scale", frame=frame)
             frame += 2
         print(f"✅ Animation complete ({frame} frames).")
 
+    def setup_camera(self, rows=10, cols=10, spacing=0.5):
+        import bpy
+        # Use existing camera or create new
+        cam = next((c for c in bpy.data.objects if c.type == 'CAMERA'), None)
+        if not cam:
+            bpy.ops.object.camera_add()
+            cam = bpy.context.object
 
+        # Position camera above the center
+        cam.location = ((cols-1)*spacing/2, (rows-1)*spacing/2, max(rows, cols))
+        cam.rotation_euler = (1.2, 0, 0)  # angled down
+        bpy.context.scene.camera = cam
+
+# ---------- Blender UI / Add-on ----------
 # ---------- Blender UI / Add-on ----------
 class AVProperties(bpy.types.PropertyGroup):
     mp3_path: bpy.props.StringProperty(name="MP3 Path", subtype='FILE_PATH')
 
+    # Wave pool settings
+    rows: bpy.props.IntProperty(name="Rows", default=100, min=1)
+    cols: bpy.props.IntProperty(name="Columns", default=100, min=1)
+    spacing: bpy.props.FloatProperty(name="Spacing", default=0.5, min=0.01)
 
 class AV_OT_ConvertAndVisualize(bpy.types.Operator):
     bl_idname = "av.convert_and_visualize"
@@ -122,19 +128,30 @@ class AV_OT_ConvertAndVisualize(bpy.types.Operator):
         props = context.scene.av_props
         maker = BlenderVideoMaker()
 
+        # Convert MP3 to WAV
         wav_path = maker.convert_mp3_to_wav(props.mp3_path)
         if not wav_path or not os.path.exists(wav_path):
             self.report({'ERROR'}, "Conversion failed or ffmpeg not found.")
             return {'CANCELLED'}
 
+        # Load audio and compute FFT
         maker.load_audio(wav_path)
         maker.get_fft()
+
+        # Clear previous objects
         maker.clear_scene()
-        objs = maker.create_wave_objects()
-        maker.animate_objects(objs)
+
+        # Create 2D wave pool
+        objs = maker.create_wave_objects(rows=props.rows, cols=props.cols, spacing=props.spacing)
+
+        # Set up camera separately
+        maker.setup_camera()
+
+        # Animate objects
+        maker.animate_objects(objs, rows=props.rows, cols=props.cols)
+
         self.report({'INFO'}, f"Visualization created from {os.path.basename(wav_path)}")
         return {'FINISHED'}
-
 
 class AV_PT_MainPanel(bpy.types.Panel):
     bl_label = "Audio Visualizer"
@@ -147,7 +164,11 @@ class AV_PT_MainPanel(bpy.types.Panel):
         layout = self.layout
         props = context.scene.av_props
         layout.prop(props, "mp3_path")
+        layout.prop(props, "rows")
+        layout.prop(props, "cols")
+        layout.prop(props, "spacing")
         layout.operator("av.convert_and_visualize", icon="MOD_WAVE")
+
 
 
 classes = [AVProperties, AV_OT_ConvertAndVisualize, AV_PT_MainPanel]
