@@ -158,6 +158,11 @@ class BlenderVideoMaker:
         frames_per_chunk = max(1, total_frames // len(self.fft_data))
         frame = 1
 
+        # Determine grid dimensions if needed for ROLL
+        num_objs = len(objs)
+        cols = int(np.sqrt(num_objs))  # assume roughly square grid
+        rows = int(np.ceil(num_objs / cols))
+
         for chunk_i, amp in enumerate(self.fft_data):
             norm_amp = amp / max_val
             for i, obj in enumerate(objs):
@@ -165,17 +170,25 @@ class BlenderVideoMaker:
                 phase = random_phases[i]
                 t = frame * 0.05 + phase
 
-                if animation_type == 'MOUTH':
-                    # All objects move together (classic mouth version)
+                if animation_type == 'ROLL':
                     morph_x = morph_amount * sin(t)
                     morph_y = morph_amount * sin(t)
                     z_wave = norm_amp * exaggeration + z_wave_emphasis * sin(t)
 
-                elif animation_type == 'WAVE':
-                    # Wave rolls through the grid
+                elif animation_type == 'MOUTH':
                     morph_x = morph_amount * sin(t + i * 0.1)
                     morph_y = morph_amount * sin(t * 1.1 + i * 0.1)
                     z_wave = norm_amp * exaggeration * sin(i * 0.2) + z_wave_emphasis * sin(t * 0.3)
+
+                elif animation_type == 'WAVE':
+                    # compute row/col index for wave roll
+                    row = i // cols
+                    col = i % cols
+                    offset = (row + col) * 0.15  # stagger based on position
+
+                    morph_x = morph_amount * sin(t + offset)
+                    morph_y = morph_amount * sin(t + offset)
+                    z_wave = norm_amp * exaggeration * sin(offset + t) + z_wave_emphasis * sin(t * 0.3)
 
                 obj.location.x = base.x + morph_x
                 obj.location.y = base.y + morph_y
@@ -184,7 +197,6 @@ class BlenderVideoMaker:
             frame += frames_per_chunk
 
         print(f"✅ Animation complete ({animation_type} style, {frame} frames).")
-
 
     # ---------- Camera ----------
     def setup_camera(self, count_x=10, count_y=10, spacing=0.5):
@@ -232,10 +244,12 @@ class AVProperties(bpy.types.PropertyGroup):
         description="Choose animation style",
         items=[
             ('MOUTH', "Mouth", "All objects move together"),
-            ('WAVE', "Wave", "Wave rolls through objects")
+            ('WAVE', "Wave", "Original wave animation"),
+            ('ROLL', "Roll", "Wave rolls through the objects")
         ],
         default='WAVE'
     )
+
 
     # Objects & materials
     mesh_type: bpy.props.EnumProperty(
@@ -290,6 +304,7 @@ class AV_OT_ConvertAndVisualize(bpy.types.Operator):
             z_wave_emphasis=props.z_wave_emphasis,
             animation_type=props.animation_type
         )
+
 
         self.report({'INFO'}, f"✅ Visualization created from {os.path.basename(wav_path)}")
         return {'FINISHED'}
